@@ -1,0 +1,25 @@
+name: Tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          version: v0.10.4
+          neovim: true
+      - run: cargo fmt --manifest-path worker/Cargo.toml --check
+      - run: cargo test --locked --manifest-path worker/Cargo.toml
+      - run: cargo clippy --locked --manifest-path worker/Cargo.toml --all-targets -- -D warnings
+      - run: cargo build --release --locked --manifest-path worker/Cargo.toml
+      - run: python3 tests/test_worker.py
+      - run: nvim --headless -u NONE -l tests/run.lua
+      - run: nvim --headless -u NONE -l tests/backend.lua

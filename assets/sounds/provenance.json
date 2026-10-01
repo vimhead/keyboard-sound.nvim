@@ -1,0 +1,54 @@
+{
+  "author": "StrikeWhistler",
+  "title": "Single clicks Keyboard Sound",
+  "source_page": "https://freesound.org/people/StrikeWhistler/sounds/580786/",
+  "source_audio": "https://cdn.freesound.org/previews/580/580786_8883972-hq.mp3",
+  "source_sha256": "40e37511b1ba62a8ab122c66931007e5f917d446b686c7686a6aa941339350d4",
+  "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "sample_rate_hz": 44100,
+  "channels": 1,
+  "encoding": "16-bit PCM",
+  "preparation": "Isolated clicks trimmed, peak normalized to 0.45, with 2 ms fade-in and 5 ms fade-out.",
+  "clips": [
+    {
+      "file": "click-01.wav",
+      "source_region_seconds": [1.075, 1.325],
+      "sha256": "0c179d5f04cd4920716da7f653893ae282ee139b864e629b1fcf45b2dba4e643"
+    },
+    {
+      "file": "click-02.wav",
+      "source_region_seconds": [1.894, 2.161],
+      "sha256": "00ec424d2f2e761159613b894d6e6f58a999c6cb5d9f0fb4cf575facf869a8bc"
+    },
+    {
+      "file": "click-04.wav",
+      "source_region_seconds": [5.389, 5.613],
+      "sha256": "819ccbc364bb82d7ba09089d53bf92863ff954b85d0e4cdaa66b7b9d4d28208d"
+    },
+    {
+      "file": "click-05.wav",
+      "source_region_seconds": [7.159, 7.361],
+      "sha256": "48b32ef28708257faca95e002a0b65998f5fb5cc307beabfb5e4d7e39cec84c6"
+    },
+    {
+      "file": "click-06.wav",
+      "source_region_seconds": [8.68, 8.91],
+      "sha256": "ce2b84bdb7dd8dae083a69d72462e17c45bf5b9909d3eab0db502474e720aa3d"
+    },
+    {
+      "file": "click-07.wav",
+      "source_region_seconds": [10.54, 10.737],
+      "sha256": "0ef59d205d1e531a1d4c6adee0c63a4b48b58f6742235e21ee6ef85309783060"
+    },
+    {
+      "file": "click-08.wav",
+      "source_region_seconds": [12.104, 12.295],
+      "sha256": "6653c621386a03974cf63c3cef059f80a686395d79293b804d22d9e5eb86c174"
+    },
+    {
+      "file": "click-09.wav",
+      "source_region_seconds": [13.42, 13.671],
+      "sha256": "60f328bac1659f60d0ed024e295213b65ba52b93e8fe46e758a530be7d979392"
+    }
+  ]
+}
