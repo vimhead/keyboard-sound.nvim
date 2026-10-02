@@ -24,11 +24,19 @@ impl Control {
     }
 
     pub fn configure(&self, volume: u8) {
-        self.state
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |previous| {
-                Some(((previous & !255).wrapping_add(256)) | u64::from(volume))
-            })
-            .unwrap();
+        let mut previous = self.state.load(Ordering::Acquire);
+        loop {
+            let next = ((previous & !255).wrapping_add(256)) | u64::from(volume);
+            match self.state.compare_exchange_weak(
+                previous,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(current) => previous = current,
+            }
+        }
     }
 
     pub fn read(&self) -> u64 {

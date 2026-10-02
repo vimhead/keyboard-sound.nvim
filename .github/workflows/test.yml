@@ -47,7 +47,8 @@ jobs:
           components: clippy, rustfmt
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
-      - uses: rhysd/action-setup-vim@v1
+      - if: matrix.target != 'aarch64-unknown-linux-gnu'
+        uses: rhysd/action-setup-vim@v1
         with:
           version: v0.10.4
           neovim: true
@@ -55,10 +56,24 @@ jobs:
       - run: cargo test --locked --manifest-path native/Cargo.toml
       - run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
       - run: cargo build --release --locked --manifest-path native/Cargo.toml
-      - run: |
+      - if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: |
           for test in run backend installer native; do
             nvim --headless -u NONE -l "tests/$test.lua"
           done
+      - name: Test ARM64 library with compatible Neovim runtime
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          docker run --rm -v "$PWD:/plugin:ro" -w /plugin ubuntu:24.04 bash -euc '
+            apt-get update
+            apt-get install -y curl ca-certificates libasound2t64
+            curl --fail --location https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-arm64.tar.gz -o /tmp/nvim.tar.gz
+            tar -xzf /tmp/nvim.tar.gz -C /tmp
+            export PATH="/tmp/nvim-linux-arm64/bin:$PATH"
+            for test in run backend installer native; do
+              nvim --headless -u NONE -l "tests/$test.lua"
+            done
+          '
       - run: |
           mkdir -p dist
           cp "native/target/release/${{ matrix.library }}" "dist/keyboard-sound-${{ matrix.target }}${{ matrix.extension }}"

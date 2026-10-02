@@ -106,7 +106,7 @@ local function run_tests()
       return 1
     end,
     keyboard_sound_version = function()
-      return "0.2.0"
+      return require("keyboard-sound.release").version
     end,
     keyboard_sound_check_samples = true,
     keyboard_sound_start = true,
