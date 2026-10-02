@@ -1,6 +1,8 @@
 local Backend = require("keyboard-sound.backend")
 local KeySounds = require("keyboard-sound.keys")
 local Listener = require("keyboard-sound.listener")
+local Native = require("keyboard-sound.native")
+local Platform = require("keyboard-sound.platform")
 
 local KeyboardSound = {}
 local active_instance = nil
@@ -67,7 +69,7 @@ function KeyboardSound.get_status()
     is_enabled = active_instance.is_enabled,
     volume = active_instance.volume,
     is_failed = active_instance.backend.is_failed,
-    is_running = active_instance.backend.job ~= nil,
+    is_running = active_instance.backend.is_running,
   }
 end
 
@@ -85,15 +87,10 @@ function KeyboardSound.setup(options)
   assert(type(options) == "table", "setup requires an options table")
   assert(type(options.is_enabled) == "boolean", "is_enabled must be a boolean")
   validate_volume(options.volume)
-  assert(options.worker_path == nil or type(options.worker_path) == "string", "worker_path must be a string")
+  assert(options.library_path == nil or type(options.library_path) == "string", "library_path must be a string")
   KeyboardSound.stop()
-  local source_path = debug.getinfo(1, "S").source:sub(2)
-  local plugin_root = vim.fn.fnamemodify(source_path, ":h:h:h")
-  local executable = options.worker_path or plugin_root .. "/worker/target/release/keyboard-sound-worker"
-  if vim.fn.has("win32") == 1 and options.worker_path == nil then
-    executable = executable .. ".exe"
-  end
-  local backend = Backend.create({ executable = executable, notify = vim.notify })
+  local library_path = options.library_path or Platform.find_library()
+  local backend = Backend.create({ library_path = library_path, load_library = Native.load, notify = vim.notify })
   local listener = Listener.create({ backend = backend, keys = KeySounds.create() })
   local augroup = vim.api.nvim_create_augroup("KeyboardSound", { clear = true })
   active_instance = {

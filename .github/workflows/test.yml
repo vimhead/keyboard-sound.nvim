@@ -1,25 +1,98 @@
-name: Tests
+name: Tests and release
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            library: libkeyboard_sound.so
+            extension: .so
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            library: libkeyboard_sound.so
+            extension: .so
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            library: libkeyboard_sound.dylib
+            extension: .dylib
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            library: libkeyboard_sound.dylib
+            extension: .dylib
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            library: keyboard_sound.dll
+            extension: .dll
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
       - uses: rhysd/action-setup-vim@v1
         with:
           version: v0.10.4
           neovim: true
-      - run: cargo fmt --manifest-path worker/Cargo.toml --check
-      - run: cargo test --locked --manifest-path worker/Cargo.toml
-      - run: cargo clippy --locked --manifest-path worker/Cargo.toml --all-targets -- -D warnings
-      - run: cargo build --release --locked --manifest-path worker/Cargo.toml
-      - run: python3 tests/test_worker.py
-      - run: nvim --headless -u NONE -l tests/run.lua
-      - run: nvim --headless -u NONE -l tests/backend.lua
+      - run: cargo fmt --manifest-path native/Cargo.toml --check
+      - run: cargo test --locked --manifest-path native/Cargo.toml
+      - run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
+      - run: cargo build --release --locked --manifest-path native/Cargo.toml
+      - run: |
+          for test in run backend installer native; do
+            nvim --headless -u NONE -l "tests/$test.lua"
+          done
+      - run: |
+          mkdir -p dist
+          cp "native/target/release/${{ matrix.library }}" "dist/keyboard-sound-${{ matrix.target }}${{ matrix.extension }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release version
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          with open("native/Cargo.toml", "rb") as source:
+              version = tomllib.load(source)["package"]["version"]
+          assert os.environ["GITHUB_REF_NAME"] == "v" + version
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum keyboard-sound-* > SHA256SUMS
+      - name: Publish prebuilt libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

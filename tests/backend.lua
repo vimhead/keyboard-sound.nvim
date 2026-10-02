@@ -1,136 +1,144 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 local KeyboardSound = require("keyboard-sound")
-local log_path = vim.fn.tempname()
-vim.env.KEYBOARD_SOUND_TEST_LOG = log_path
-vim.env.KEYBOARD_SOUND_TEST_MODE = "record"
-local notices = {}
+local Native = require("keyboard-sound.native")
+local notices, clicks, volumes = {}, {}, {}
+local start_count, stop_count, load_count = 0, 0, 0
+local error_code = 0
+local should_fail_loading = false
 rawset(vim, "notify", function(message)
   table.insert(notices, message)
 end)
-
-local function read_messages()
-  if vim.fn.filereadable(log_path) ~= 1 then
-    return {}
-  end
-  local messages = {}
-  for _, line in ipairs(vim.fn.readfile(log_path)) do
-    table.insert(messages, vim.json.decode(line))
-  end
-  return messages
-end
-
-local function count_clicks()
-  local count = 0
-  for _, message in ipairs(read_messages()) do
-    if message.type == "click" then
-      count = count + 1
-    end
-  end
-  return count
-end
-
-local function wait_for_count(count)
-  assert(
-    vim.wait(2000, function()
-      return #read_messages() >= count
-    end),
-    "worker did not receive messages"
-  )
-end
+rawset(Native, "load", function(_)
+  load_count = load_count + 1
+  assert(not should_fail_loading, "test missing library")
+  return {
+    keyboard_sound_start = function()
+      start_count = start_count + 1
+      return 0
+    end,
+    keyboard_sound_shutdown = function()
+      stop_count = stop_count + 1
+      return 0
+    end,
+    keyboard_sound_configure = function(volume)
+      table.insert(volumes, volume)
+      return 0
+    end,
+    keyboard_sound_play = function(sound, timestamp)
+      table.insert(clicks, { sound = sound, timestamp = timestamp })
+      return 0
+    end,
+    keyboard_sound_poll_error = function()
+      return error_code
+    end,
+  }
+end)
 
 local function type_keys(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
+  vim.wait(30, function()
+    return false
+  end)
 end
 
 local function run_tests()
-  local options = { is_enabled = false, volume = 37, worker_path = vim.fn.getcwd() .. "/tests/fake-worker.py" }
+  local options = { is_enabled = false, volume = 37, library_path = "/fake/library" }
   KeyboardSound.setup(options)
-  assert(not KeyboardSound.get_status().is_running)
+  assert(not KeyboardSound.get_status().is_running and load_count == 0)
   KeyboardSound.enable()
-  wait_for_count(1)
-  assert(KeyboardSound.get_status().is_running)
-  local configured = read_messages()[1]
-  assert(configured.type == "configure" and configured.is_enabled and configured.volume == 37)
+  assert(start_count == 1 and volumes[1] == 37 and KeyboardSound.get_status().is_running)
   type_keys("iajn<Esc>")
-  wait_for_count(4)
-  local messages = read_messages()
+  assert(#clicks == 3)
   for index, sound in ipairs({ 0, 6, 7 }) do
-    assert(messages[index + 1].type == "click")
-    assert(messages[index + 1].sound == sound)
-    assert(messages[index + 1].queued_at_millis > 0)
+    assert(clicks[index].sound == sound and clicks[index].timestamp > 0)
   end
   KeyboardSound.set_volume(0)
-  assert(not KeyboardSound.get_status().is_running)
+  assert(stop_count == 1 and not KeyboardSound.get_status().is_running)
   assert(KeyboardSound.get_status().volume == 37)
   type_keys("iajn<Esc>")
-  vim.wait(100, function()
-    return false
-  end)
-  assert(count_clicks() == 3)
+  assert(#clicks == 3)
   KeyboardSound.enable()
-  wait_for_count(5)
-  assert(read_messages()[5].volume == 37)
+  assert(start_count == 2 and volumes[2] == 37)
   KeyboardSound.set_volume(25)
-  wait_for_count(6)
-  assert(read_messages()[6].volume == 25)
+  assert(volumes[3] == 25)
   options.is_enabled = true
   options.volume = 25
   KeyboardSound.setup(options)
-  wait_for_count(7)
   type_keys("ia<Esc>")
-  wait_for_count(8)
-  assert(count_clicks() == 4, "repeat setup duplicated clicks")
-  assert(#notices == 0, "stopped worker produced spurious warning")
-  KeyboardSound.stop()
-  vim.wait(100, function()
-    return false
-  end)
-  assert(#notices == 0)
-
-  KeyboardSound.setup(options)
-  wait_for_count(9)
+  assert(#clicks == 4, "repeat setup duplicated clicks")
   type_keys("ia<Esc>:KeyboardSoundDisable<CR>:KeyboardSoundEnable<CR>")
-  wait_for_count(10)
-  vim.wait(100, function()
+  assert(#clicks == 4, "old click survived mute and re-enable")
+  error_code = 2
+  assert(vim.wait(1000, function()
+    return KeyboardSound.get_status().is_failed
+  end))
+  vim.wait(200, function()
     return false
   end)
-  assert(count_clicks() == 4, "old click survived mute and re-enable")
-  KeyboardSound.stop()
-
-  vim.env.KEYBOARD_SOUND_TEST_MODE = "crash"
-  KeyboardSound.setup(options)
-  assert(vim.wait(2000, function()
-    return KeyboardSound.get_status().is_failed
-  end))
-  assert(not KeyboardSound.get_status().is_running)
-  assert(#notices == 1)
-  vim.env.KEYBOARD_SOUND_TEST_MODE = "record"
-  KeyboardSound.enable()
-  wait_for_count(11)
-  assert(not KeyboardSound.get_status().is_failed)
-  KeyboardSound.stop()
-
-  vim.env.KEYBOARD_SOUND_TEST_MODE = "error"
-  KeyboardSound.setup(options)
-  assert(vim.wait(2000, function()
-    return KeyboardSound.get_status().is_failed
-  end))
-  assert(#notices == 2)
-  local previous_clicks = count_clicks()
+  assert(#notices == 1, "device error did not warn exactly once")
   type_keys("iajn<Esc>")
-  vim.wait(100, function()
+  assert(#clicks == 4, "failed device still received clicks")
+  error_code = 0
+  KeyboardSound.enable()
+  assert(not KeyboardSound.get_status().is_failed)
+  type_keys("in<Esc>")
+  assert(#clicks == 5 and clicks[5].sound == 7)
+  KeyboardSound.stop()
+  vim.wait(200, function()
     return false
   end)
-  assert(count_clicks() == previous_clicks, "failed device still received clicks")
+  assert(#notices == 1, "stopped timer produced spurious warning")
+
+  should_fail_loading = true
+  KeyboardSound.setup(options)
+  vim.wait(30, function()
+    return false
+  end)
+  assert(KeyboardSound.get_status().is_failed and not KeyboardSound.get_status().is_running)
+  assert(#notices == 2)
+  should_fail_loading = false
+  KeyboardSound.enable()
+  assert(not KeyboardSound.get_status().is_failed and KeyboardSound.get_status().is_running)
   KeyboardSound.stop()
-  vim.fn.delete(log_path)
-  print("All keyboard-sound.nvim subprocess tests passed.")
+
+  local valid = {
+    keyboard_sound_abi_version = function()
+      return 1
+    end,
+    keyboard_sound_version = function()
+      return "0.2.0"
+    end,
+    keyboard_sound_check_samples = true,
+    keyboard_sound_start = true,
+    keyboard_sound_configure = true,
+    keyboard_sound_play = true,
+    keyboard_sound_poll_error = true,
+    keyboard_sound_shutdown = true,
+  }
+  local validation = {
+    library = valid,
+    read_string = function(value)
+      return value
+    end,
+  }
+  Native.validate(validation)
+  rawset(valid, "keyboard_sound_abi_version", function()
+    return 2
+  end)
+  assert(not pcall(Native.validate, validation))
+  rawset(valid, "keyboard_sound_abi_version", function()
+    return 1
+  end)
+  valid.keyboard_sound_version = function()
+    return "0.1.0"
+  end
+  assert(not pcall(Native.validate, validation))
+  print("All keyboard-sound.nvim native backend tests passed.")
 end
 
 local is_successful, error_message = xpcall(run_tests, debug.traceback)
+KeyboardSound.stop()
 if not is_successful then
-  KeyboardSound.stop()
-  vim.fn.delete(log_path)
   io.stderr:write(error_message .. "\n")
   vim.cmd("cquit 1")
 end

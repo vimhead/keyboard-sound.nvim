@@ -2,12 +2,15 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{Receiver, RecvTimeoutError},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender},
     },
     time::{Duration, Instant},
 };
 
-use crate::{output::AudioOutput, protocol::MAX_CLICK_AGE};
+use crate::{
+    output::AudioOutput,
+    protocol::{AudioError, MAX_CLICK_AGE},
+};
 
 pub struct Control {
     state: AtomicU64,
@@ -67,7 +70,11 @@ impl<Output: AudioOutput> Playback<Output> {
         }
     }
 
-    pub fn update<Factory>(&mut self, state: u64, open_output: &mut Factory) -> Result<(), String>
+    pub fn update<Factory>(
+        &mut self,
+        state: u64,
+        open_output: &mut Factory,
+    ) -> Result<(), AudioError>
     where
         Factory: FnMut(Arc<AtomicBool>) -> Result<Output, String>,
     {
@@ -78,7 +85,7 @@ impl<Output: AudioOutput> Playback<Output> {
         if self.is_device_failed.swap(false, Ordering::AcqRel) {
             self.output = None;
             self.is_unavailable = true;
-            return Err("Audio device disconnected. Use :KeyboardSoundEnable to retry.".into());
+            return Err(AudioError::Disconnected);
         }
         let volume = (state & 255) as u8;
         if volume == 0 {
@@ -86,11 +93,9 @@ impl<Output: AudioOutput> Playback<Output> {
         } else if self.output.is_none() && !self.is_unavailable {
             match open_output(Arc::clone(&self.is_device_failed)) {
                 Ok(output) => self.output = Some(output),
-                Err(error) => {
+                Err(_) => {
                     self.is_unavailable = true;
-                    return Err(format!(
-                        "Audio unavailable: {error}. Use :KeyboardSoundEnable to retry."
-                    ));
+                    return Err(AudioError::Unavailable);
                 }
             }
         }
@@ -112,6 +117,8 @@ impl<Output: AudioOutput> Playback<Output> {
 pub struct WorkerInput {
     pub control: Arc<Control>,
     pub clicks: Receiver<Click>,
+    pub notices: SyncSender<AudioError>,
+    pub is_stopped: Arc<AtomicBool>,
 }
 
 impl WorkerInput {
@@ -121,16 +128,18 @@ impl WorkerInput {
         Factory: FnMut(Arc<AtomicBool>) -> Result<Output, String>,
     {
         let mut playback = Playback::create(Arc::new(AtomicBool::new(false)));
-        loop {
+        while !self.is_stopped.load(Ordering::Acquire) {
             if let Err(notice) = playback.update(self.control.read(), &mut open_output) {
-                eprintln!("{notice}");
+                let _ = self.notices.try_send(notice);
             }
             match self.clicks.recv_timeout(Duration::from_millis(10)) {
                 Ok(click) => {
                     if let Err(notice) = playback.update(self.control.read(), &mut open_output) {
-                        eprintln!("{notice}");
+                        let _ = self.notices.try_send(notice);
                     }
-                    playback.play(click);
+                    if !self.is_stopped.load(Ordering::Acquire) {
+                        playback.play(click);
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
